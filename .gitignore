@@ -1,0 +1,32 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# macos
+.DS_Store
+
+# knowledge artifacts (large files, rebuilt by pipeline)
+knowledge/output/
+knowledge/sources/
+
+# postgres data
+postgres-data/
+
+# claude code local settings
+.claude/
+
+# logs & credentials
+*.log
+*.pem
+*.key
+*.cert
