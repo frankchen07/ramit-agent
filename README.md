@@ -191,12 +191,25 @@ railway logs
 
 The bot is invite-only. Unauthorized users get a prompt to request a code. Each code can only be redeemed once.
 
-**Generate codes** (run locally or via `railway run`):
+**Generate codes:**
 
 ```bash
+# Against your local Postgres (DATABASE_URL from .env)
 python -m src.admin_cli --generate 5
 # prints 5 codes like: AB3KXJ2L
+
+# Against the Railway-deployed bot's Postgres
+DATABASE_URL=<DATABASE_PUBLIC_URL> python -m src.admin_cli --generate 5
 ```
+
+`admin_cli` connects to whatever `DATABASE_URL` resolves to — by default your
+local `.env`. To manage invites/users for the deployed bot, override it with
+the Postgres service's `DATABASE_PUBLIC_URL` (Railway dashboard → Postgres →
+Variables, or `railway variables --service Postgres`). Its plain
+`DATABASE_URL` (`postgres.railway.internal`) only resolves inside Railway's
+network, so `railway run` won't work for this — it executes locally, not in
+the container. The same `DATABASE_URL=<...>` override works for all commands
+below.
 
 Share a code with someone and tell them to DM the bot:
 ```

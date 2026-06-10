@@ -6,8 +6,14 @@ Usage (local):
     python -m src.admin_cli --revoke AB3KXJ2L
     python -m src.admin_cli --remove-user 123456789
 
-Usage (Railway):
-    railway run python -m src.admin_cli --generate 5
+Usage (against the Railway-deployed bot's database):
+    DATABASE_URL=<DATABASE_PUBLIC_URL from Railway Postgres service> \\
+        python -m src.admin_cli --generate 5
+
+    (Railway's plain DATABASE_URL is the internal `postgres.railway.internal`
+    host, which only resolves inside Railway's network — `railway run` won't
+    help here since it executes locally. Use the Postgres service's
+    DATABASE_PUBLIC_URL instead.)
 """
 import argparse
 import asyncio
@@ -16,7 +22,7 @@ import os
 from dotenv import load_dotenv
 from psycopg_pool import AsyncConnectionPool
 
-from src.invite_system import generate_invite_code
+from src.invite_system import generate_invite_code, setup as setup_invite_system
 
 load_dotenv()
 
@@ -25,6 +31,7 @@ async def run(args: argparse.Namespace) -> None:
     db_url = os.environ["DATABASE_URL"]
     pool = AsyncConnectionPool(db_url, kwargs={"autocommit": True}, open=False)
     await pool.open()
+    await setup_invite_system(pool)
 
     try:
         if args.generate:
