@@ -91,7 +91,7 @@ async def build_graph(db_url: str):
 
     graph = builder.compile(checkpointer=checkpointer)
     logger.info("Agent graph ready.")
-    return graph
+    return graph, pool
 
 
 async def chat(graph, chat_id: int, user_text: str) -> str:

@@ -5,17 +5,48 @@ import os
 
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from src.agent import build_graph, chat
 from src.tools import load_knowledge
+import src.invite_system as invite_system
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+
+_UNAUTHORIZED_MSG = "You need an invite code to use this bot. Use: /start <code>"
+
+
+async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    if await invite_system.is_authorized(user_id):
+        await update.message.reply_text("You're already set up. Ask me about money.")
+        return
+
+    args = context.args
+    if not args:
+        await update.message.reply_text(_UNAUTHORIZED_MSG)
+        return
+
+    code = args[0].strip()
+    if await invite_system.redeem_code(user_id, code):
+        await update.message.reply_text(
+            "You're in. Ask me anything about money — budgeting, investing, negotiating, all of it."
+        )
+    else:
+        await update.message.reply_text("That code is invalid or already used.")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    if not await invite_system.is_authorized(user_id):
+        await update.message.reply_text(_UNAUTHORIZED_MSG)
+        return
+
     graph = context.application.bot_data["graph"]
     chat_id = update.effective_chat.id
     text = update.message.text
@@ -36,7 +67,11 @@ async def post_init(app: Application) -> None:
 
     logger.info("Building agent graph...")
     db_url = os.environ["DATABASE_URL"]
-    app.bot_data["graph"] = await build_graph(db_url)
+    graph, pool = await build_graph(db_url)
+    app.bot_data["graph"] = graph
+
+    logger.info("Setting up invite system...")
+    await invite_system.setup(pool)
 
     logger.info("Ramit agent ready.")
 
@@ -49,6 +84,7 @@ def main() -> None:
         .post_init(post_init)
         .build()
     )
+    app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     logger.info("Starting Ramit bot (long polling)...")
     app.run_polling(drop_pending_updates=True)
