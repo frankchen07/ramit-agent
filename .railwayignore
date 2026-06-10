@@ -1,0 +1,35 @@
+# Same as .gitignore, except knowledge/output/ is INCLUDED —
+# the Dockerfile COPYs it into the image and `railway up --no-gitignore`
+# needs it in the upload.
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# macos
+.DS_Store
+
+# raw pipeline inputs — not needed for the Docker build
+knowledge/sources/
+
+# postgres data
+postgres-data/
+
+# claude code local settings
+.claude/
+
+# logs & credentials
+*.log
+*.pem
+*.key
+*.cert

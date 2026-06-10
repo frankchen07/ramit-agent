@@ -69,6 +69,7 @@ ramit-agent/
 │   └─ run_pipeline.py     Pipeline CLI entry point
 ├─ Dockerfile              Container image for Railway deployment
 ├─ .dockerignore           Excludes sources, pipeline code, secrets from image
+├─ .railwayignore          Like .gitignore, but keeps knowledge/output/ for `railway up`
 ├─ docker-compose.yml      PostgreSQL for local dev (pgvector/pg17)
 ├─ pyproject.toml          Python package + dependencies
 └─ Makefile                Convenience commands
@@ -161,14 +162,22 @@ railway variables set \
   CHAT_MODEL=claude-haiku-4-5-20251001 \
   ADMIN_TELEGRAM_USER_IDS=<your_telegram_user_id>
 
-railway up
+railway up --no-gitignore
 ```
 
 ### Deploy updates
 
 ```bash
-git push   # Railway auto-deploys on push to the linked branch
+railway up --no-gitignore
 ```
+
+`knowledge/output/` is excluded by `.gitignore` (the pipeline artifacts are
+large and rebuilt locally), but the Dockerfile needs it in the build context.
+`--no-gitignore` tells `railway up` to use `.railwayignore` instead — same
+exclusions as `.gitignore` (secrets, `.venv`, raw sources, etc.) but with
+`knowledge/output/` included. Forgetting `--no-gitignore` is the most common
+deploy failure: Railway reports `knowledge/output/ramit-sethi/` missing from
+the build context.
 
 ### Monitor
 
