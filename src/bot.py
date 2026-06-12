@@ -5,6 +5,7 @@ import os
 
 from dotenv import load_dotenv
 from telegram import Update
+from telegram.constants import MessageLimit
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from src.agent import build_graph, chat
@@ -17,6 +18,28 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 _UNAUTHORIZED_MSG = "You need an invite code to use this bot. Use: /start <code>"
+_MAX_MSG_LEN = MessageLimit.MAX_TEXT_LENGTH
+
+
+def _split_message(text: str, limit: int = _MAX_MSG_LEN) -> list[str]:
+    """Split text into chunks <= limit chars, breaking on paragraph/line/word boundaries."""
+    text = text.strip()
+    if len(text) <= limit:
+        return [text]
+
+    chunks = []
+    while len(text) > limit:
+        split_at = text.rfind("\n\n", 0, limit)
+        if split_at == -1:
+            split_at = text.rfind("\n", 0, limit)
+        if split_at == -1:
+            split_at = text.rfind(" ", 0, limit)
+        if split_at == -1:
+            split_at = limit
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip("\n ")
+    chunks.append(text)
+    return chunks
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -58,7 +81,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.exception("Agent error for chat_id=%s", chat_id)
         response = "Something went wrong on my end. Try again."
 
-    await update.message.reply_text(response)
+    try:
+        for chunk in _split_message(response):
+            await update.message.reply_text(chunk)
+    except Exception:
+        logger.exception("Failed to send reply for chat_id=%s", chat_id)
+
+
+async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error("Unhandled exception while processing update: %s", update, exc_info=context.error)
 
 
 async def post_init(app: Application) -> None:
@@ -86,6 +117,7 @@ def main() -> None:
     )
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_error_handler(handle_error)
     logger.info("Starting Ramit bot (long polling)...")
     app.run_polling(drop_pending_updates=True)
 

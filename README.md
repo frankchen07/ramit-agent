@@ -15,13 +15,21 @@ User sends Telegram message
             └─ LangGraph: _respond() node
                  ├─ tools.py: query_knowledge(text)
                  │    └─ encode query → cosine similarity → top-6 chunks from evidence_index.jsonl
-                 ├─ build system prompt: SOUL.md + runtime_context.md + retrieved chunks
+                 ├─ build system prompt: SOUL.md
+                 │    + "## What you remember about this user" ← rolling summary, if any
+                 │    + runtime_context.md + retrieved chunks
+                 ├─ history = last 20 messages
                  └─ _call_llm() → Anthropic / OpenRouter / OpenAI
                       └─ response text
   └─ bot.py: reply_text(response)
+  └─ _maybe_compact(): if 10+ messages have aged out of the last-20 window
+       since the last summary update, fold them into the rolling summary
+       via a separate _call_llm() — by default anthropic/claude-haiku-4.5
+       on OpenRouter (MEMORY_MODEL/MEMORY_PROVIDER), since fact extraction
+       needs far less reasoning than the persona response.
 
-Conversation history stored per chat_id in PostgreSQL (LangGraph checkpointer)
-Last 20 messages carried as context on each turn.
+Full conversation history stored forever per chat_id in PostgreSQL (LangGraph checkpointer).
+Last 20 messages + rolling summary carried as context on each turn.
 ```
 
 ### Knowledge pipeline (run once, or when adding new content)
@@ -241,8 +249,10 @@ python -m src.admin_cli --remove-user 123456789
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `CHAT_PROVIDER` | Yes | `anthropic`, `openrouter`, or `openai` |
 | `CHAT_MODEL` | Yes | Model ID for the chosen provider |
+| `MEMORY_MODEL` | No | Model for the memory-flush/compaction LLM call (default: same as `CHAT_MODEL`) |
+| `MEMORY_PROVIDER` | No | Provider for the memory-flush call (default: same as `CHAT_PROVIDER`) |
 | `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key |
-| `OPENROUTER_API_KEY` | If using OpenRouter | OpenRouter API key |
+| `OPENROUTER_API_KEY` | If using OpenRouter for `CHAT_PROVIDER` or `MEMORY_PROVIDER` | OpenRouter API key |
 | `OPENAI_API_KEY` | If using OpenAI | OpenAI API key |
 | `ADMIN_TELEGRAM_USER_IDS` | No | Comma-separated Telegram user IDs that bypass invite check |
 | `KNOWLEDGE_OUTPUT_DIR` | No | Path to knowledge output (default: `knowledge/output/ramit-sethi`) |
@@ -327,6 +337,8 @@ python -m src.bot
 **OpenRouter as default provider** — env vars control provider and model, so you can swap between deepseek, Claude, GPT-4o, etc. with no code changes. OpenRouter is cheaper than Anthropic direct for high-volume use and gives access to many models under one key.
 
 **LangGraph + PostgreSQL for conversation memory** — persistent checkpointing over in-memory state so conversation history survives bot restarts. Each Telegram `chat_id` maps to its own LangGraph thread, giving full per-user isolation.
+
+**Rolling summary + memory flush for long conversations** — once a chat exceeds 20 messages, older turns are periodically condensed into a running summary (prepended to the system prompt) via a separate LLM call, which by default runs on `anthropic/claude-haiku-4.5` via OpenRouter (configurable via `MEMORY_MODEL`/`MEMORY_PROVIDER`) since fact-extraction needs far less reasoning than the persona response. Full history stays in Postgres. Mirrors OpenClaw's compaction/memory-flush pattern at a much smaller scale.
 
 **Local embeddings (sentence-transformers)** — `all-MiniLM-L6-v2` runs on-device (MPS on Apple Silicon), zero cost per query, no API dependency. Trade-off: ~10s cold start on first run and ~94MB index held in memory.
 
