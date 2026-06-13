@@ -219,6 +219,17 @@ network, so `railway run` won't work for this — it executes locally, not in
 the container. The same `DATABASE_URL=<...>` override works for all commands
 below.
 
+To pull `DATABASE_PUBLIC_URL` straight from Railway instead of copy-pasting it:
+
+```bash
+export DATABASE_URL=$(railway variables --service Postgres --kv | grep ^DATABASE_PUBLIC_URL= | cut -d= -f2-)
+python -m src.admin_cli --generate 5
+```
+
+The `cut -d= -f2-` matters — `--kv` prints `KEY=value` lines, so without it
+`DATABASE_URL` ends up set to the literal string `DATABASE_PUBLIC_URL=postgresql://...`
+(an invalid connection string) instead of just the URL.
+
 Share a code with someone and tell them to DM the bot:
 ```
 /start AB3KXJ2L
@@ -232,6 +243,9 @@ python -m src.admin_cli --list-users
 
 # Revoke a code (prevents redemption; doesn't affect already-authorized users)
 python -m src.admin_cli --revoke AB3KXJ2L
+
+# Delete an unredeemed invite code (use --remove-user for already-redeemed codes/users)
+python -m src.admin_cli --delete-code AB3KXJ2L
 
 # Remove a user and wipe their conversation history
 python -m src.admin_cli --remove-user 123456789

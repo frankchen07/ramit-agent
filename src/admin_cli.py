@@ -4,6 +4,7 @@ Usage (local):
     python -m src.admin_cli --generate 5
     python -m src.admin_cli --list-users
     python -m src.admin_cli --revoke AB3KXJ2L
+    python -m src.admin_cli --delete-code AB3KXJ2L
     python -m src.admin_cli --remove-user 123456789
 
 Usage (against the Railway-deployed bot's database):
@@ -72,6 +73,17 @@ async def run(args: argparse.Namespace) -> None:
                 else:
                     print(f"Code not found: {args.revoke}")
 
+        elif args.delete_code:
+            async with pool.connection() as conn:
+                result = await conn.execute(
+                    "DELETE FROM authorized_users WHERE invite_code = %s AND redeemed_at IS NULL RETURNING id",
+                    (args.delete_code,),
+                )
+                if await result.fetchone():
+                    print(f"Deleted {args.delete_code}")
+                else:
+                    print(f"Not found or already redeemed (use --remove-user instead): {args.delete_code}")
+
         elif args.remove_user is not None:
             async with pool.connection() as conn:
                 await conn.execute(
@@ -98,10 +110,11 @@ def main() -> None:
     parser.add_argument("--generate", type=int, metavar="N", help="Generate N invite codes")
     parser.add_argument("--list-users", action="store_true", help="List all authorized users")
     parser.add_argument("--revoke", metavar="CODE", help="Deactivate an invite code")
+    parser.add_argument("--delete-code", metavar="CODE", help="Delete an unredeemed invite code")
     parser.add_argument("--remove-user", type=int, metavar="USER_ID", help="Remove user and their conversation history")
     args = parser.parse_args()
 
-    if not any([args.generate, args.list_users, args.revoke, args.remove_user is not None]):
+    if not any([args.generate, args.list_users, args.revoke, args.delete_code, args.remove_user is not None]):
         parser.print_help()
         return
 
