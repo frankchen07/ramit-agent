@@ -4,6 +4,78 @@ A Telegram chatbot that channels Ramit Sethi's personal finance philosophy. It d
 
 ---
 
+## Cheat sheet
+
+### Dev (local)
+
+```bash
+docker compose up -d        # local Postgres
+source .venv/bin/activate
+python -m src.bot           # or: make run-bot
+```
+
+Stop: `Ctrl+C`, then `deactivate` and `docker compose down` (data stays in the
+Docker volume; `down -v` wipes it).
+
+### Prod (Railway)
+
+Two services in the `production` environment: `Postgres` (Railway's template
+image) and `ramit-bot` (this repo's Dockerfile). Never `railway up` the
+Postgres service — that uploads this repo and builds it *into* the Postgres
+service, replacing the database image.
+
+```bash
+# Ship local code to the bot (--no-gitignore: see "Deploy updates" below)
+railway up --no-gitignore --service ramit-bot --environment production
+
+# Stop — removes each service's latest deployment; the Postgres volume is kept
+railway down --service ramit-bot --environment production --yes
+railway down --service Postgres --environment production --yes
+
+# Start back up — Postgres first
+railway redeploy --service Postgres --environment production --yes
+railway redeploy --service ramit-bot --environment production --yes
+
+railway status              # linked project/env
+railway service list        # online/offline per service
+railway logs --service ramit-bot
+```
+
+### Admin CLI
+
+Runs against whatever `DATABASE_URL` resolves to — local `.env` by default.
+Postgres must be up. To target prod, export the public URL first (see
+[Invite-only access](#invite-only-access) for why):
+
+```bash
+source .venv/bin/activate
+export DATABASE_URL=$(railway variables --service Postgres --kv | grep ^DATABASE_PUBLIC_URL= | cut -d= -f2-)
+```
+
+The export sticks for the rest of that shell, and `load_dotenv()` doesn't
+override it — a `python -m src.bot` in the same shell would run against prod.
+`unset DATABASE_URL` (or open a new shell) before going back to dev.
+
+```bash
+python -m src.admin_cli --generate 1            # create N invite codes
+python -m src.admin_cli --list-users            # users + redemption timestamps
+python -m src.admin_cli --revoke CODE           # deactivate code, keep row
+python -m src.admin_cli --delete-code CODE      # delete code (unredeemed only)
+python -m src.admin_cli --remove-user USER_ID   # remove user + wipe their history
+```
+
+### Knowledge pipeline
+
+```bash
+source .venv/bin/activate
+cd knowledge && python run_pipeline.py          # or: make pipeline
+```
+
+Output is baked into the Docker image, so prod only picks it up on the next
+`railway up --no-gitignore`.
+
+---
+
 ## How it works
 
 ### Runtime flow
