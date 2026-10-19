@@ -119,7 +119,11 @@ async def _respond(state: AgentState) -> dict:
     text = await _call_llm(system, history)
 
     update = {"messages": [{"role": "assistant", "content": text}]}
-    compaction = await _maybe_compact(state)
+    try:
+        compaction = await _maybe_compact(state)
+    except Exception:
+        logger.exception("Memory compaction failed for chat_id=%s", state["chat_id"])
+        compaction = None
     if compaction:
         update.update(compaction)
     return update

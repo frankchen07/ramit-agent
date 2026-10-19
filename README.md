@@ -32,9 +32,11 @@ railway up --no-gitignore --service ramit-bot --environment production
 railway down --service ramit-bot --environment production --yes
 railway down --service Postgres --environment production --yes
 
-# Start back up — Postgres first
+# Start back up — Postgres first, then the bot
 railway redeploy --service Postgres --environment production --yes
-railway redeploy --service ramit-bot --environment production --yes
+railway redeploy --service ramit-bot --environment production --yes  # last deployed image, no new code
+# ...or start the bot on your current code instead (~5 min build; commit first so prod matches git)
+railway up --no-gitignore --service ramit-bot --environment production
 
 railway status              # linked project/env
 railway service list        # online/offline per service

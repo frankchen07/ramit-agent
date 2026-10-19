@@ -1,4 +1,13 @@
-from src.bot import _MAX_MSG_LEN, _split_message
+import logging
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import pytest
+from telegram import Chat, Message, Update, User
+from telegram.constants import ParseMode
+from telegram.error import BadRequest
+
+from src.bot import _MAX_MSG_LEN, _split_message, _to_telegram_html, handle_error, handle_message
 
 
 def test_short_message_returned_unchanged():
@@ -46,3 +55,83 @@ def test_leading_whitespace_does_not_produce_empty_chunk():
     assert all(chunk for chunk in chunks)
     for chunk in chunks:
         assert len(chunk) <= _MAX_MSG_LEN
+
+
+def _make_update(text: str) -> Update:
+    message = Message(
+        message_id=1,
+        date=datetime.now(timezone.utc),
+        chat=Chat(id=4242, type="private"),
+        from_user=User(id=777, first_name="Pat", is_bot=False),
+        text=text,
+    )
+    return Update(update_id=99, message=message)
+
+
+@pytest.mark.asyncio
+async def test_handle_error_does_not_log_message_text(caplog):
+    update = _make_update("my salary is 123456")
+    context = SimpleNamespace(error=RuntimeError("boom"))
+
+    with caplog.at_level(logging.ERROR, logger="src.bot"):
+        await handle_error(update, context)
+
+    assert "123456" not in caplog.text
+    assert "Pat" not in caplog.text
+    assert "4242" in caplog.text
+
+
+def test_to_telegram_html_converts_bold_and_code():
+    assert _to_telegram_html("**Automate** it with `401k`") == "<b>Automate</b> it with <code>401k</code>"
+
+
+def test_to_telegram_html_converts_headings():
+    assert _to_telegram_html("## The Plan\nDo it") == "<b>The Plan</b>\nDo it"
+
+
+def test_to_telegram_html_escapes_html():
+    assert _to_telegram_html("fixed costs < 60% & rising") == "fixed costs &lt; 60% &amp; rising"
+
+
+def test_to_telegram_html_leaves_bullets_alone():
+    assert _to_telegram_html("* rent\n* food") == "* rent\n* food"
+
+
+@pytest.mark.asyncio
+async def test_handle_message_falls_back_to_plain_text_when_html_rejected(monkeypatch):
+    sent = []
+
+    async def fake_reply_text(text, parse_mode=None):
+        if parse_mode == ParseMode.HTML:
+            raise BadRequest("Can't parse entities")
+        sent.append(text)
+
+    async def fake_is_authorized(user_id):
+        return True
+
+    async def fake_chat(graph, chat_id, text):
+        return "**Bold** reply"
+
+    async def fake_send_chat_action(chat_id, action):
+        pass
+
+    monkeypatch.setattr("src.bot.invite_system.is_authorized", fake_is_authorized)
+    monkeypatch.setattr("src.bot.chat", fake_chat)
+
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=777),
+        effective_chat=SimpleNamespace(id=4242),
+        message=SimpleNamespace(text="hi", reply_text=fake_reply_text),
+    )
+    context = SimpleNamespace(
+        application=SimpleNamespace(bot_data={"graph": None}),
+        bot=SimpleNamespace(send_chat_action=fake_send_chat_action),
+    )
+
+    await handle_message(update, context)
+
+    assert sent == ["**Bold** reply"]
+
+
+def test_to_telegram_html_bare_heading_does_not_swallow_next_line():
+    assert _to_telegram_html("##\n- item") == "##\n- item"

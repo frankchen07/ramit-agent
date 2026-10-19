@@ -1,11 +1,14 @@
 """Standalone Telegram bot for Ramit agent."""
 import asyncio
+import html
 import logging
 import os
+import re
 
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.constants import MessageLimit
+from telegram.constants import MessageLimit, ParseMode
+from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from src.agent import build_graph, chat
@@ -40,6 +43,15 @@ def _split_message(text: str, limit: int = _MAX_MSG_LEN) -> list[str]:
         text = text[split_at:].lstrip("\n ")
     chunks.append(text)
     return chunks
+
+
+def _to_telegram_html(text: str) -> str:
+    """Convert the markdown subset LLMs usually emit (bold, inline code, headings) to Telegram HTML."""
+    text = html.escape(text, quote=False)
+    text = re.sub(r"^#{1,6}[ \t]+(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
+    text = re.sub(r"\*\*([^\n]+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
+    return text
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -83,13 +95,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         for chunk in _split_message(response):
-            await update.message.reply_text(chunk)
+            try:
+                await update.message.reply_text(_to_telegram_html(chunk), parse_mode=ParseMode.HTML)
+            except BadRequest:
+                await update.message.reply_text(chunk)
     except Exception:
         logger.exception("Failed to send reply for chat_id=%s", chat_id)
 
 
 async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error("Unhandled exception while processing update: %s", update, exc_info=context.error)
+    # Log ids only: the Update repr carries the user's message text and profile.
+    if isinstance(update, Update):
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        logger.error(
+            "Unhandled exception for update_id=%s chat_id=%s", update.update_id, chat_id, exc_info=context.error
+        )
+    else:
+        logger.error("Unhandled exception outside an update", exc_info=context.error)
 
 
 async def post_init(app: Application) -> None:

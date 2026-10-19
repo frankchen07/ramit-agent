@@ -153,3 +153,24 @@ def test_get_memory_provider_defaults_to_chat_provider(monkeypatch):
 def test_get_memory_provider_uses_memory_provider_when_set(monkeypatch):
     monkeypatch.setenv("MEMORY_PROVIDER", "openrouter")
     assert _get_memory_provider() == "openrouter"
+
+
+@pytest.mark.asyncio
+async def test_respond_returns_reply_when_compaction_fails(monkeypatch):
+    async def fake_call_llm(system, messages, model=None, provider=None):
+        if messages[0]["content"].startswith("Existing summary"):
+            raise RuntimeError("memory model down")
+        return "assistant reply"
+
+    def fake_query_knowledge(text):
+        return "knowledge chunk"
+
+    monkeypatch.setattr("src.agent._call_llm", fake_call_llm)
+    monkeypatch.setattr("src.agent.query_knowledge", fake_query_knowledge)
+
+    state = {"messages": _make_messages(_MAX_HISTORY + _COMPACT_BATCH), "chat_id": 1}
+
+    result = await _respond(state)
+
+    assert result["messages"] == [{"role": "assistant", "content": "assistant reply"}]
+    assert "summary" not in result
