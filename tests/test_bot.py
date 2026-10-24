@@ -7,7 +7,14 @@ from telegram import Chat, Message, Update, User
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
-from src.bot import _MAX_MSG_LEN, _split_message, _to_telegram_html, handle_error, handle_message
+from src.bot import (
+    _MAX_MSG_LEN,
+    _allowed_user_ids,
+    _split_message,
+    _to_telegram_html,
+    handle_error,
+    handle_message,
+)
 
 
 def test_short_message_returned_unchanged():
@@ -106,16 +113,12 @@ async def test_handle_message_falls_back_to_plain_text_when_html_rejected(monkey
             raise BadRequest("Can't parse entities")
         sent.append(text)
 
-    async def fake_is_authorized(user_id):
-        return True
-
     async def fake_chat(graph, chat_id, text):
         return "**Bold** reply"
 
     async def fake_send_chat_action(chat_id, action):
         pass
 
-    monkeypatch.setattr("src.bot.invite_system.is_authorized", fake_is_authorized)
     monkeypatch.setattr("src.bot.chat", fake_chat)
 
     update = SimpleNamespace(
@@ -124,13 +127,52 @@ async def test_handle_message_falls_back_to_plain_text_when_html_rejected(monkey
         message=SimpleNamespace(text="hi", reply_text=fake_reply_text),
     )
     context = SimpleNamespace(
-        application=SimpleNamespace(bot_data={"graph": None}),
+        application=SimpleNamespace(bot_data={"graph": None, "allowed_user_ids": {777}}),
         bot=SimpleNamespace(send_chat_action=fake_send_chat_action),
     )
 
     await handle_message(update, context)
 
     assert sent == ["**Bold** reply"]
+
+
+@pytest.mark.asyncio
+async def test_handle_message_rejects_user_not_on_allowlist(monkeypatch):
+    sent = []
+    chat_calls = []
+
+    async def fake_reply_text(text, parse_mode=None):
+        sent.append(text)
+
+    async def fake_chat(graph, chat_id, text):
+        chat_calls.append(text)
+        return "should not happen"
+
+    monkeypatch.setattr("src.bot.chat", fake_chat)
+
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=999),
+        effective_chat=SimpleNamespace(id=4242),
+        message=SimpleNamespace(text="hi", reply_text=fake_reply_text),
+    )
+    context = SimpleNamespace(application=SimpleNamespace(bot_data={"graph": None, "allowed_user_ids": {777}}))
+
+    await handle_message(update, context)
+
+    assert chat_calls == []
+    assert len(sent) == 1
+
+
+def test_allowed_user_ids_parses_comma_separated_env(monkeypatch):
+    monkeypatch.setenv("ADMIN_TELEGRAM_USER_IDS", " 111, 222,,333 ")
+    assert _allowed_user_ids() == {111, 222, 333}
+
+
+def test_allowed_user_ids_refuses_to_start_when_unset(monkeypatch):
+    # An empty allowlist would open the bot (and the API bill) to anyone.
+    monkeypatch.delenv("ADMIN_TELEGRAM_USER_IDS", raising=False)
+    with pytest.raises(SystemExit):
+        _allowed_user_ids()
 
 
 def test_to_telegram_html_bare_heading_does_not_swallow_next_line():

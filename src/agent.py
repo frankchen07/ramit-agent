@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 
-from src.tools import query_knowledge, load_knowledge
+from src.tools import query_knowledge
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ async def build_graph(db_url: str):
 
     graph = builder.compile(checkpointer=checkpointer)
     logger.info("Agent graph ready.")
-    return graph, pool
+    return graph
 
 
 async def chat(graph, chat_id: int, user_text: str) -> str:

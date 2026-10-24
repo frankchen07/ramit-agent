@@ -1,6 +1,8 @@
 """PDF parser using pymupdf4llm."""
 from pathlib import Path
 
+from src.parsing.md import _extract_structure
+
 
 def parse(filepath: Path) -> dict:
     try:
@@ -15,15 +17,3 @@ def parse(filepath: Path) -> dict:
         "structure": _extract_structure(md_text),
     }
 
-
-def _extract_structure(text: str) -> list[dict]:
-    import re
-    boundaries = []
-    for m in re.finditer(r"^(#{1,4}\s+.+)$", text, re.MULTILINE):
-        level = len(m.group(1)) - len(m.group(1).lstrip("#"))
-        boundaries.append({
-            "position": m.start(),
-            "type": f"h{level}",
-            "text": m.group(1).strip(),
-        })
-    return boundaries

@@ -60,9 +60,9 @@ def call_with_cache(
 ) -> str:
     p = _provider()
     if p == "openrouter":
-        return _call_openrouter(model, system_blocks, user_message, max_tokens, retries)
+        return _call_openai_compatible(_get_openrouter_client(), "OpenRouter", model, system_blocks, user_message, max_tokens, retries)
     if p == "openai":
-        return _call_openai(model, system_blocks, user_message, max_tokens, retries)
+        return _call_openai_compatible(_get_openai_client(), "OpenAI", model, system_blocks, user_message, max_tokens, retries)
     return _call_anthropic(model, system_blocks, user_message, max_tokens, retries)
 
 
@@ -108,8 +108,7 @@ def get_model(cfg: dict, key: str) -> str:
     return cfg["llm"][key]
 
 
-def _call_openai(model, system_blocks, user_message, max_tokens, retries):
-    client = _get_openai_client()
+def _call_openai_compatible(client, label, model, system_blocks, user_message, max_tokens, retries):
     system_text = "\n\n".join(b["text"] for b in system_blocks if b.get("type") == "text")
 
     for attempt in range(retries):
@@ -128,34 +127,7 @@ def _call_openai(model, system_blocks, user_message, max_tokens, retries):
             return resp.choices[0].message.content
         except Exception as e:
             if attempt < retries - 1:
-                logger.warning(f"OpenAI error ({e}), retrying in {2 ** (attempt + 1)}s...")
-                time.sleep(2 ** (attempt + 1))
-            else:
-                raise
-    raise RuntimeError("All retries exhausted")
-
-
-def _call_openrouter(model, system_blocks, user_message, max_tokens, retries):
-    client = _get_openrouter_client()
-    system_text = "\n\n".join(b["text"] for b in system_blocks if b.get("type") == "text")
-
-    for attempt in range(retries):
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "system", "content": system_text},
-                    {"role": "user", "content": user_message},
-                ],
-            )
-            logger.debug(
-                f"Tokens — input: {resp.usage.prompt_tokens}, output: {resp.usage.completion_tokens}"
-            )
-            return resp.choices[0].message.content
-        except Exception as e:
-            if attempt < retries - 1:
-                logger.warning(f"OpenRouter error ({e}), retrying in {2 ** (attempt + 1)}s...")
+                logger.warning(f"{label} error ({e}), retrying in {2 ** (attempt + 1)}s...")
                 time.sleep(2 ** (attempt + 1))
             else:
                 raise

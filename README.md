@@ -2,11 +2,13 @@
 
 A Telegram chatbot that channels Ramit Sethi's personal finance philosophy. It diagnoses financial problems as behavioral first, retrieves grounding context from a knowledge base built on his books and podcasts, and responds in his voice via Claude or any OpenAI-compatible provider.
 
+Single-user and local: it runs on your machine while you want it, and only answers the
+Telegram user IDs in `ADMIN_TELEGRAM_USER_IDS`. (The multi-user version with invite codes
+and a Railway deploy lives on the `ramit-agent-sharing` branch.)
+
 ---
 
 ## Cheat sheet
-
-### Dev (local)
 
 ```bash
 docker compose up -d        # local Postgres
@@ -15,56 +17,8 @@ python -m src.bot           # or: make run-bot
 ```
 
 Stop: `Ctrl+C`, then `deactivate` and `docker compose down` (data stays in the
-Docker volume; `down -v` wipes it).
-
-### Prod (Railway)
-
-Two services in the `production` environment: `Postgres` (Railway's template
-image) and `ramit-bot` (this repo's Dockerfile). Never `railway up` the
-Postgres service — that uploads this repo and builds it *into* the Postgres
-service, replacing the database image.
-
-```bash
-# Ship local code to the bot (--no-gitignore: see "Deploy updates" below)
-railway up --no-gitignore --service ramit-bot --environment production
-
-# Stop — removes each service's latest deployment; the Postgres volume is kept
-railway down --service ramit-bot --environment production --yes
-railway down --service Postgres --environment production --yes
-
-# Start back up — Postgres first, then the bot
-railway redeploy --service Postgres --environment production --yes
-railway redeploy --service ramit-bot --environment production --yes  # last deployed image, no new code
-# ...or start the bot on your current code instead (~5 min build; commit first so prod matches git)
-railway up --no-gitignore --service ramit-bot --environment production
-
-railway status              # linked project/env
-railway service list        # online/offline per service
-railway logs --service ramit-bot
-```
-
-### Admin CLI
-
-Runs against whatever `DATABASE_URL` resolves to — local `.env` by default.
-Postgres must be up. To target prod, export the public URL first (see
-[Invite-only access](#invite-only-access) for why):
-
-```bash
-source .venv/bin/activate
-export DATABASE_URL=$(railway variables --service Postgres --kv | grep ^DATABASE_PUBLIC_URL= | cut -d= -f2-)
-```
-
-The export sticks for the rest of that shell, and `load_dotenv()` doesn't
-override it — a `python -m src.bot` in the same shell would run against prod.
-`unset DATABASE_URL` (or open a new shell) before going back to dev.
-
-```bash
-python -m src.admin_cli --generate 1            # create N invite codes
-python -m src.admin_cli --list-users            # users + redemption timestamps
-python -m src.admin_cli --revoke CODE           # deactivate code, keep row
-python -m src.admin_cli --delete-code CODE      # delete code (unredeemed only)
-python -m src.admin_cli --remove-user USER_ID   # remove user + wipe their history
-```
+Docker volume; `down -v` wipes it). The bot only answers while it's running —
+long polling stops if your laptop sleeps.
 
 ### Knowledge pipeline
 
@@ -73,8 +27,7 @@ source .venv/bin/activate
 cd knowledge && python run_pipeline.py          # or: make pipeline
 ```
 
-Output is baked into the Docker image, so prod only picks it up on the next
-`railway up --no-gitignore`.
+Restart the bot to pick up new output — it loads the index at startup.
 
 ---
 
@@ -136,9 +89,7 @@ ramit-agent/
 ├─ src/
 │   ├─ bot.py              Telegram bot entry point (long polling)
 │   ├─ agent.py            LangGraph agent, LLM routing, conversation history
-│   ├─ tools.py            Semantic search over the knowledge index
-│   ├─ invite_system.py    Invite code auth — runtime DB ops
-│   └─ admin_cli.py        Admin CLI: generate codes, list users, revoke, remove
+│   └─ tools.py            Semantic search over the knowledge index
 ├─ persona/
 │   └─ SOUL.md             System prompt — Ramit's persona, frameworks, and rules
 ├─ knowledge/
@@ -149,9 +100,6 @@ ramit-agent/
 │   ├─ prompts/            LLM prompts for pipeline stages
 │   ├─ src/                Pipeline stage modules (ingest, chunk, summarize, etc.)
 │   └─ run_pipeline.py     Pipeline CLI entry point
-├─ Dockerfile              Container image for Railway deployment
-├─ .dockerignore           Excludes sources, pipeline code, secrets from image
-├─ .railwayignore          Like .gitignore, but keeps knowledge/output/ for `railway up`
 ├─ docker-compose.yml      PostgreSQL for local dev (pgvector/pg17)
 ├─ pyproject.toml          Python package + dependencies
 └─ Makefile                Convenience commands
@@ -170,6 +118,10 @@ git clone <repo>
 cd ramit-agent
 cp .env.example .env   # then fill in the values below
 ```
+
+Set `ADMIN_TELEGRAM_USER_IDS` to your own Telegram user ID (DM
+[@userinfobot](https://t.me/userinfobot) to get it). The bot refuses to start
+without it, so it can't be opened up to strangers on your API bill by accident.
 
 ### 2. Create a virtual environment and install
 
@@ -196,139 +148,6 @@ Wait for `Ramit agent ready.` in the logs — the bot is live.
 
 ---
 
-## Running locally vs. deploying to Railway
-
-This is one codebase and one Postgres schema (`authorized_users` + LangGraph's
-`checkpoints` tables) — "local" and "Railway" are just two places to run the
-same Docker image, pointed at two different Postgres instances.
-
-| | Local | Railway |
-|---|---|---|
-| Code | `src/bot.py` (same Docker image) | same |
-| Postgres | `docker compose` on your machine | Railway-managed Postgres add-on |
-| Uptime | only while your process is running — long polling stops if your laptop sleeps | 24/7 |
-| Conversation history & invites | stored in your local Postgres | stored in Railway's Postgres — separate DB unless `DATABASE_URL` is shared |
-
-A few things that follow from this:
-
-- **Multi-user / multi-chat support is built into the bot, not Railway.**
-  Every Telegram `chat_id` gets its own LangGraph thread in the `checkpoints`
-  tables, and `authorized_users` tracks invites. This works identically
-  against either Postgres instance.
-- **The knowledge/extraction pipeline never runs on Railway.** It's a local,
-  occasional batch job (`knowledge/run_pipeline.py`) that produces
-  `evidence_index.jsonl` and `runtime_context.md`. Those files are baked into
-  the Docker image at build time (see `Dockerfile`) and loaded into memory at
-  bot startup — Railway just ships the prebuilt artifacts.
-- Local and Railway each have their own Postgres, so conversation history and
-  invites don't carry over between them unless you point both at the same
-  `DATABASE_URL`.
-
-Railway is used for the always-on deployment because long polling needs the
-process running 24/7 and LangGraph checkpoints need persistent Postgres — see
-[Design decisions](#design-decisions) for the full rationale.
-
-### One-time Railway setup
-
-```bash
-npm install -g @railway/cli
-railway login
-railway init         # links this repo to a Railway project (railway.toml is optional — Railway auto-detects the Dockerfile)
-
-# Add Postgres add-on in the Railway dashboard — it auto-sets DATABASE_URL
-
-railway variables set \
-  TELEGRAM_BOT_TOKEN=<token> \
-  ANTHROPIC_API_KEY=<key> \
-  CHAT_PROVIDER=anthropic \
-  CHAT_MODEL=claude-haiku-4-5-20251001 \
-  ADMIN_TELEGRAM_USER_IDS=<your_telegram_user_id>
-
-railway up --no-gitignore
-```
-
-### Deploy updates
-
-```bash
-railway up --no-gitignore
-```
-
-`knowledge/output/` is excluded by `.gitignore` (the pipeline artifacts are
-large and rebuilt locally), but the Dockerfile needs it in the build context.
-`--no-gitignore` tells `railway up` to use `.railwayignore` instead — same
-exclusions as `.gitignore` (secrets, `.venv`, raw sources, etc.) but with
-`knowledge/output/` included. Forgetting `--no-gitignore` is the most common
-deploy failure: Railway reports `knowledge/output/ramit-sethi/` missing from
-the build context.
-
-### Monitor
-
-```bash
-railway logs
-```
-
----
-
-## Invite-only access
-
-The bot is invite-only. Unauthorized users get a prompt to request a code. Each code can only be redeemed once.
-
-**Generate codes:**
-
-```bash
-# Against your local Postgres (DATABASE_URL from .env)
-python -m src.admin_cli --generate 5
-# prints 5 codes like: AB3KXJ2L
-
-# Against the Railway-deployed bot's Postgres
-DATABASE_URL=<DATABASE_PUBLIC_URL> python -m src.admin_cli --generate 5
-```
-
-`admin_cli` connects to whatever `DATABASE_URL` resolves to — by default your
-local `.env`. To manage invites/users for the deployed bot, override it with
-the Postgres service's `DATABASE_PUBLIC_URL` (Railway dashboard → Postgres →
-Variables, or `railway variables --service Postgres`). Its plain
-`DATABASE_URL` (`postgres.railway.internal`) only resolves inside Railway's
-network, so `railway run` won't work for this — it executes locally, not in
-the container. The same `DATABASE_URL=<...>` override works for all commands
-below.
-
-To pull `DATABASE_PUBLIC_URL` straight from Railway instead of copy-pasting it:
-
-```bash
-export DATABASE_URL=$(railway variables --service Postgres --kv | grep ^DATABASE_PUBLIC_URL= | cut -d= -f2-)
-python -m src.admin_cli --generate 5
-```
-
-The `cut -d= -f2-` matters — `--kv` prints `KEY=value` lines, so without it
-`DATABASE_URL` ends up set to the literal string `DATABASE_PUBLIC_URL=postgresql://...`
-(an invalid connection string) instead of just the URL.
-
-Share a code with someone and tell them to DM the bot:
-```
-/start AB3KXJ2L
-```
-
-**Other admin commands:**
-
-```bash
-# List all authorized users and redemption dates
-python -m src.admin_cli --list-users
-
-# Revoke a code (prevents redemption; doesn't affect already-authorized users)
-python -m src.admin_cli --revoke AB3KXJ2L
-
-# Delete an unredeemed invite code (use --remove-user for already-redeemed codes/users)
-python -m src.admin_cli --delete-code AB3KXJ2L
-
-# Remove a user and wipe their conversation history
-python -m src.admin_cli --remove-user 123456789
-```
-
-**Admin bypass** — set `ADMIN_TELEGRAM_USER_IDS` to a comma-separated list of Telegram user IDs that skip the invite check entirely. Your own ID should always be in this list.
-
----
-
 ## Environment variables
 
 | Variable | Required | Description |
@@ -342,7 +161,7 @@ python -m src.admin_cli --remove-user 123456789
 | `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key |
 | `OPENROUTER_API_KEY` | If using OpenRouter for `CHAT_PROVIDER` or `MEMORY_PROVIDER` | OpenRouter API key |
 | `OPENAI_API_KEY` | If using OpenAI | OpenAI API key |
-| `ADMIN_TELEGRAM_USER_IDS` | No | Comma-separated Telegram user IDs that bypass invite check |
+| `ADMIN_TELEGRAM_USER_IDS` | Yes | Comma-separated Telegram user IDs allowed to talk to the bot; everyone else is turned away |
 | `KNOWLEDGE_OUTPUT_DIR` | No | Path to knowledge output (default: `knowledge/output/ramit-sethi`) |
 | `LLM_PROVIDER` | No | Provider for the knowledge pipeline (default: `anthropic`) |
 
@@ -355,6 +174,8 @@ DATABASE_URL=postgresql://ramit:ramit@localhost:5432/ramit
 CHAT_PROVIDER=openrouter
 CHAT_MODEL=deepseek/deepseek-v3.2
 OPENROUTER_API_KEY=sk-or-v1-...
+
+ADMIN_TELEGRAM_USER_IDS=123456789
 ```
 
 ---
@@ -405,15 +226,6 @@ cd knowledge && python run_pipeline.py --force
 | `make db-down` | Stop PostgreSQL |
 | `make reset-memory` | Drop LangGraph checkpoint tables (clears all conversation history) |
 
-**Start everything:**
-```bash
-make db-up
-source .venv/bin/activate
-python -m src.bot
-```
-
-**Stop everything:** `Ctrl+C` to stop the bot, then `make db-down`.
-
 **Reset conversation memory** (drops all per-user history from Postgres): `make reset-memory`.
 
 **Token usage:** The bot does not log token usage at runtime. Check your provider's dashboard — OpenRouter tracks spend and tokens per API key natively.
@@ -422,9 +234,9 @@ python -m src.bot
 
 ## Design decisions
 
-**OpenRouter as default provider** — env vars control provider and model, so you can swap between deepseek, Claude, GPT-4o, etc. with no code changes. OpenRouter is cheaper than Anthropic direct for high-volume use and gives access to many models under one key.
+**Provider-agnostic LLM calls** — env vars control provider and model (`.env.example` defaults to Anthropic), so you can swap between Claude, deepseek, GPT-4o, etc. with no code changes. OpenRouter gives access to many models under one key and is the default for the cheaper memory-flush call.
 
-**LangGraph + PostgreSQL for conversation memory** — persistent checkpointing over in-memory state so conversation history survives bot restarts. Each Telegram `chat_id` maps to its own LangGraph thread, giving full per-user isolation.
+**LangGraph + PostgreSQL for conversation memory** — persistent checkpointing over in-memory state so conversation history survives bot restarts. Each Telegram `chat_id` maps to its own LangGraph thread, so separate chats keep separate histories.
 
 **Rolling summary + memory flush for long conversations** — once a chat exceeds 20 messages, older turns are periodically condensed into a running summary (prepended to the system prompt) via a separate LLM call, which by default runs on `anthropic/claude-haiku-4.5` via OpenRouter (configurable via `MEMORY_MODEL`/`MEMORY_PROVIDER`) since fact-extraction needs far less reasoning than the persona response. Full history stays in Postgres. Mirrors OpenClaw's compaction/memory-flush pattern at a much smaller scale.
 
@@ -434,11 +246,11 @@ python -m src.bot
 
 **Retrieval-augmented prompting over fine-tuning** — top-6 semantically matched chunks are injected into the system prompt each turn. Keeps responses grounded in Ramit's actual source material without the cost or inflexibility of fine-tuning a model.
 
-**Long-polling over webhooks** — no reverse proxy or public URL needed for local development. Trade-off: slightly higher message latency versus webhooks in production.
+**Long-polling over webhooks** — no reverse proxy, public URL, or open port needed, which is what makes running it on a laptop work.
 
-**Invite codes over a user whitelist** — codes can be generated and shared without knowing a user's Telegram ID in advance. Frank generates a batch, hands them out, and revokes individually if needed. An `ADMIN_TELEGRAM_USER_IDS` env var bypasses the check entirely for the owner.
+**Env allowlist over invite codes** — one user, so a fixed `ADMIN_TELEGRAM_USER_IDS` list replaces the invite/admin-CLI system (kept on the `ramit-agent-sharing` branch). Empty list = refuse to start, never "open to everyone."
 
-**Railway over other hosting options** — see [Running locally vs. deploying to Railway](#running-locally-vs-deploying-to-railway) for the full rationale (24/7 uptime for long polling + managed Postgres + auto-deploy on push).
+**Local over hosted** — on Railway's Hobby plan the always-on bot (torch + the in-memory index) plus Postgres kept hitting the usage cap, so services got paused. For a single user, running it locally costs nothing; the trade-off is it's only up while your machine is.
 
 **Tier system in the pipeline (primary / secondary / non-canonical)** — sources are classified by authority so the pipeline can weight them accordingly. Only primary and secondary tiers get embedded and returned at retrieval time; non-canonical material is excluded.
 

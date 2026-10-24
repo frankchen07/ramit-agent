@@ -1,10 +1,7 @@
-.PHONY: run-bot run-server pipeline install db-up db-down reset-memory
+.PHONY: run-bot pipeline install db-up db-down reset-memory
 
 run-bot:
 	python -m src.bot
-
-run-server:
-	cd knowledge && AGENT_PIPELINE_OUTPUT_DIR=output/ramit-sethi python -m src.server.mcp_server
 
 pipeline:
 	cd knowledge && python run_pipeline.py

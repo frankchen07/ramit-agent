@@ -7,7 +7,6 @@ advisor:
 paths:
   sources: "sources"
   output: "output/ramit-sethi"
-  prompts: "prompts"
   base_prompt: "prompts/context_compaction_prompt.md"
   advisor_addendum: "prompts/ramit_addendum.md"
 
@@ -49,8 +48,6 @@ chunking:
   target_tokens: 500
   min_tokens: 150
   max_tokens: 650
-  # No overlap — research shows it adds cost with no recall benefit
-  overlap_tokens: 0
   tokenizer: "cl100k_base"
   # Maximum chunks to sample per source for per-source summary (Stage 4)
   max_sample_chunks: 40
